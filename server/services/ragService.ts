@@ -21,19 +21,23 @@ export class RAGService {
     }
 
     let targetDocName: string | undefined;
+    const userDocs = db.getAllDocuments(undefined, notebookId);
+    const hasAnyDocumentsUploaded = userDocs.length > 0;
 
     if (documentId) {
       const doc = db.getDocument(documentId);
       if (doc) {
         targetDocName = doc.originalFileName;
       }
+    } else if (userDocs.length > 0) {
+      targetDocName = userDocs.map((d) => d.originalFileName).join(', ');
     }
 
     // 1. Follow-up query contextual enrichment for retrieval
     let retrievalQuery = query.trim();
     if (history && history.length > 0) {
       const isFollowUp =
-        /^(can you|give an example|why|how|what about|explain|tell me more|what does that mean|example|more details|what are)/i.test(
+        /^(can you|give an example|why|how|what about|explain|tell me more|what does that mean|example|more details|what are|where is|the second|point|this|it)/i.test(
           query.trim()
         ) || query.trim().split(/\s+/).length <= 5;
 
@@ -55,12 +59,13 @@ export class RAGService {
     // 3. Build Structured Grounded Context
     const constructedContext = contextBuilder.buildContext(retrievedChunks);
 
-    // 4. Generate Grounded, ChatGPT-like Tutor Response
+    // 4. Generate Grounded, Accurate Response following strict rules
     const llmResponse = await llmService.generateGroundedAnswer({
       query: query.trim(),
       context: constructedContext,
       docName: targetDocName,
       history,
+      hasAnyDocumentsUploaded,
     });
 
     // 5. Format Clean Citations

@@ -80,7 +80,7 @@ export class OCRService {
 
     const base64Data = imageBuffer.toString('base64');
     const safeMime = mimeType || 'image/jpeg';
-    const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     const now = Date.now();
 
     const prompt =
@@ -118,7 +118,7 @@ export class OCRService {
             },
           ],
           config: {
-            abortSignal: AbortSignal.timeout(10000),
+            abortSignal: AbortSignal.timeout(25000),
           },
         });
 
@@ -155,7 +155,7 @@ export class OCRService {
       return null;
     }
 
-    const candidateModels = ['gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
     const now = Date.now();
     const base64Data = pdfBuffer.toString('base64');
 
@@ -201,7 +201,7 @@ export class OCRService {
             },
           ],
           config: {
-            abortSignal: AbortSignal.timeout(12000),
+            abortSignal: AbortSignal.timeout(25000),
           },
         });
 

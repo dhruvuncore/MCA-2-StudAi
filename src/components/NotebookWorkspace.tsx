@@ -60,6 +60,7 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     apiService.getChatMessages(notebook.id)
   );
+  const [selectedDocId, setSelectedDocId] = useState<string>('all');
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -68,6 +69,7 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
   // Sync messages if notebook changes
   useEffect(() => {
     setMessages(apiService.getChatMessages(notebook.id));
+    setSelectedDocId('all');
   }, [notebook.id]);
 
   useEffect(() => {
@@ -102,7 +104,8 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
         content: m.text || '',
       }));
 
-      const ragResult = await apiService.sendRAGQuery(notebook.id, trimmedQuery, undefined, conversationHistory);
+      const docIdToPass = selectedDocId === 'all' ? undefined : selectedDocId;
+      const ragResult = await apiService.sendRAGQuery(notebook.id, trimmedQuery, docIdToPass, conversationHistory);
       const aiMsg: ChatMessage = {
         id: 'msg_ai_' + Date.now(),
         notebookId: notebook.id,
@@ -307,6 +310,26 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Document Filter Scope Selector */}
+              {notebook.documents && notebook.documents.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                  <BookOpen className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <select
+                    value={selectedDocId}
+                    onChange={(e) => setSelectedDocId(e.target.value)}
+                    className="bg-transparent text-xs text-slate-700 font-medium focus:outline-none cursor-pointer max-w-[130px] sm:max-w-[190px] truncate"
+                    title="Choose search scope: query all uploaded documents or focus strictly on a specific document"
+                  >
+                    <option value="all">All Documents ({notebook.documents.length})</option>
+                    {notebook.documents.map((doc) => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {messages.length > 0 && (
                 <button
                   type="button"
@@ -410,31 +433,63 @@ export const NotebookWorkspace: React.FC<NotebookWorkspaceProps> = ({
                             )}
                           </div>
                           <div className="space-y-1.5">
-                            {msg.sourceReferences.map((src, sIdx) => (
-                              <div
-                                key={sIdx}
-                                className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-[11px] text-slate-800 space-y-1"
-                              >
-                                <div className="font-semibold flex items-center justify-between">
-                                  <div className="flex items-center gap-1.5 min-w-0">
-                                    <FileText className="w-3.5 h-3.5 text-[#2563EB] shrink-0" />
-                                    <span className="truncate text-[#1E3A8A] font-medium">
-                                      {src.docName} — {src.pageEnd && src.pageEnd > src.page ? `Pages ${src.page}–${src.pageEnd}` : `Page ${src.page}`}
-                                    </span>
+                            {msg.sourceReferences.map((src, sIdx) => {
+                              const matchingDoc = notebook.documents?.find(
+                                (d) =>
+                                  d.name === src.docName ||
+                                  (src.docName && d.name.toLowerCase().includes(src.docName.toLowerCase()))
+                              );
+
+                              return (
+                                <button
+                                  key={sIdx}
+                                  type="button"
+                                  onClick={() => {
+                                    if (matchingDoc) {
+                                      onPreviewDocument(matchingDoc);
+                                    } else {
+                                      onPreviewDocument({
+                                        id: 'preview_doc_' + sIdx,
+                                        name: src.docName,
+                                        notebookId: notebook.id,
+                                        size: '1.2 MB',
+                                        pages: src.pageEnd || src.page || 1,
+                                        status: 'ready',
+                                        extractedChunksCount: 1,
+                                        previewSnippet: src.snippet,
+                                        uploadDate: 'Recently',
+                                      });
+                                    }
+                                  }}
+                                  className="w-full text-left p-2.5 rounded-xl bg-slate-50 hover:bg-blue-50/70 border border-slate-200/80 hover:border-blue-300 text-[11px] text-slate-800 space-y-1 cursor-pointer transition-colors group shadow-2xs"
+                                  title="Click to preview source material in this notebook"
+                                >
+                                  <div className="font-semibold flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5 min-w-0">
+                                      <FileText className="w-3.5 h-3.5 text-[#2563EB] shrink-0 group-hover:scale-110 transition-transform" />
+                                      <span className="truncate text-[#1E3A8A] font-medium group-hover:underline">
+                                        {src.docName} — {src.pageEnd && src.pageEnd > src.page ? `Pages ${src.page}–${src.pageEnd}` : `Page ${src.page}`}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      {src.section && (
+                                        <span className="text-[10px] text-slate-500 font-normal truncate max-w-[120px] sm:max-w-[160px]">
+                                          {src.section}
+                                        </span>
+                                      )}
+                                      <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-600 bg-blue-100/70 px-1.5 py-0.5 rounded font-medium ml-1">
+                                        <Eye className="w-2.5 h-2.5" /> View
+                                      </span>
+                                    </div>
                                   </div>
-                                  {src.section && (
-                                    <span className="text-[10px] text-slate-500 font-normal truncate max-w-[150px] sm:max-w-[200px]">
-                                      {src.section}
-                                    </span>
+                                  {src.snippet && (
+                                    <p className="text-[10.5px] text-slate-600 italic pl-2 border-l-2 border-[#2563EB]/40 line-clamp-2">
+                                      "{src.snippet}"
+                                    </p>
                                   )}
-                                </div>
-                                {src.snippet && (
-                                  <p className="text-[10.5px] text-slate-600 italic pl-2 border-l-2 border-[#2563EB]/40 line-clamp-2">
-                                    "{src.snippet}"
-                                  </p>
-                                )}
-                              </div>
-                            ))}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       )}

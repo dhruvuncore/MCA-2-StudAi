@@ -32,9 +32,9 @@ export const config = {
   MIN_CHUNK_CHAR_LENGTH: 30,
 
   // Retrieval configuration - Deep coverage for handwritten notes & textbooks
-  TOP_K: 5,
-  SIMILARITY_THRESHOLD: 0.30, // Optimized to prevent dropping relevant handwritten notes
-  MAX_CONTEXT_TOKENS: 3500,
+  TOP_K: 7,
+  SIMILARITY_THRESHOLD: 0.22, // Optimized to prevent dropping relevant handwritten notes & multi-page concepts
+  MAX_CONTEXT_TOKENS: 5000,
 
   // Embedding & LLM
   DEFAULT_EMBEDDING_DIM: 128,

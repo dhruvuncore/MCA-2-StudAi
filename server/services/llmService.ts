@@ -11,6 +11,7 @@ export interface LLMGenerationOptions {
   context: ConstructedContext;
   docName?: string;
   history?: ChatHistoryMessage[];
+  hasAnyDocumentsUploaded?: boolean;
 }
 
 export interface LLMResponse {
@@ -51,29 +52,59 @@ export class LLMService {
   }
 
   async generateGroundedAnswer(options: LLMGenerationOptions): Promise<LLMResponse> {
-    const { query, context, docName, history } = options;
+    const { query, context, docName, history, hasAnyDocumentsUploaded = false } = options;
+
+    const isCasual = this.isGreetingOrCasual(query);
+    if (isCasual) {
+      return this.handleCasualResponse(query);
+    }
+
+    const hasContext = !!(context.contextString && context.contextString.trim().length > 0);
+
+    // If documents are uploaded but zero relevant evidence was retrieved
+    if (!hasContext && hasAnyDocumentsUploaded) {
+      return {
+        answer: `I couldn't find a clear answer to this question in the uploaded materials for **${docName || 'your notebook'}**. I can explain it using general knowledge if you'd like.\n\n*Tip: If this topic is in your notes under a different name or section, try selecting that specific document from the dropdown above or asking with specific keywords from that chapter.*`,
+        isGrounded: false,
+        insufficientInfo: true,
+      };
+    }
+
+    if (!hasContext && !hasAnyDocumentsUploaded) {
+      return {
+        answer: `No study materials or documents have been uploaded to this notebook yet. Please upload your course PDF, Word document, or handwritten notes using the upload button on the left, or specify if you'd like an answer based on general academic knowledge.`,
+        isGrounded: false,
+        insufficientInfo: true,
+      };
+    }
 
     const client = this.getClient();
     if (client) {
       try {
-        const isCasual = this.isGreetingOrCasual(query);
-
-        const systemInstruction = isCasual
-          ? `You are a friendly, intelligent AI Study Assistant and Tutor, styled like ChatGPT and Gemini.\n` +
-            `The student is greeting you or engaging in casual conversation (e.g. "hi", "hello", "who are you").\n` +
-            `Respond warmly, conversationally, and concisely. Introduce yourself as their AI study assistant, ready to explain concepts, review uploaded notes, or generate practice exams. Do NOT output robotic academic templates or unsolicited exam outlines for a greeting.`
-          : `You are an expert, conversational, and highly articulate AI Academic Study Assistant and Tutor, styled like ChatGPT and Gemini.\n\n` +
-            `RESPONSE FORMAT & STYLE RULES:\n` +
-            `1. INTUITIVE, WELL-STRUCTURED ANSWERS:\n` +
-            `   - Begin with a direct, conversational 1-2 sentence explanation or high-level intuition.\n` +
-            `   - Use elegant, well-spaced markdown: bold key concepts, intuitive subheadings (###), and clear bullet points.\n` +
-            `   - Include concrete, practical examples, relational schemas (e.g. \`Enrollment(StudentID, CourseID)\`), or code snippets where applicable.\n` +
-            `   - Conclude with a helpful, concise "Key Takeaway" and an "Exam Tip" on how to present this answer for top marks in university exams.\n\n` +
-            `2. ACCURACY & COURSE GROUNDING:\n` +
-            `   - If supporting course notes or textbook excerpts are provided below, ground your explanation in their definitions and formulas.\n` +
-            `   - If the student's question extends beyond the excerpts, provide a complete, authoritative university-level explanation so the student always receives a thorough, genuine answer.\n\n` +
-            `3. NO SYSTEM JARGON:\n` +
-            `   - NEVER use internal pipeline jargon like "chunks", "embeddings", "vector DB", "retrieval scores", "Top-K", or "RAG pipeline". Refer naturally to "your lecture notes" or "the course curriculum".`;
+        const systemInstruction =
+          `You are an accurate, trustworthy, document-grounded AI Study Assistant, combining the conversational pedagogical intelligence of ChatGPT with the strict, document-grounded fidelity of NotebookLM.\n\n` +
+          `CORE DOCUMENT-GROUNDING PRINCIPLES:\n` +
+          `1. THE STUDENT'S UPLOADED DOCUMENTS ARE THE PRIMARY SOURCE OF TRUTH:\n` +
+          `   - Carefully read and analyze the retrieved document excerpts provided below.\n` +
+          `   - Answer the student's exact question using the evidence present in those excerpts.\n` +
+          `   - Prioritize the exact definitions, theorems, formulas, algorithms, and terminology from the student's notes.\n` +
+          `   - Do NOT guess, hallucinate, invent facts, or substitute generic textbook answers for what the student's notes say.\n` +
+          `   - If the answer is distributed across multiple passages or pages, synthesize them accurately without altering their meaning.\n` +
+          `   - If the answer is only partially supported by the excerpts, state what the documents establish and clearly identify what is missing.\n` +
+          `   - If the answer cannot be found in the provided excerpts, explicitly say:\n` +
+          `     "I couldn't find a clear answer to this question in the uploaded materials. I can explain it using general knowledge if you'd like."\n\n` +
+          `2. PEDAGOGY & STUDENT-FRIENDLY STRUCTURE:\n` +
+          `   - Answer the specific question directly from the first sentence.\n` +
+          `   - Use structured markdown formatting: bold key terms, intuitive subheadings (###), bullet points, and numbered steps.\n` +
+          `   - For mathematical equations, schemas, or algorithms, format them clearly using readable notation or LaTeX (e.g. $X \\to Y$).\n` +
+          `   - If handwriting or a formula in the source notes is unclear or marked [unclear], communicate the uncertainty honestly rather than guessing.\n\n` +
+          `3. CITATIONS & SOURCE TRANSPARENCY:\n` +
+          `   - Conclude document-based answers with transparent source citations:\n` +
+          `     **Source:** [Document name], page [number] or section [name]\n` +
+          `     **Supporting content:** [Short quotation or faithful paraphrase of the relevant passage]\n` +
+          `   - Never fabricate citations or page numbers. Only cite the actual sources provided.\n\n` +
+          `4. NO SYSTEM JARGON:\n` +
+          `   - Never use internal pipeline jargon like "chunks", "embeddings", "vector DB", "retrieval scores", or "top-k". Refer naturally to "your uploaded lecture notes" or "your syllabus".`;
 
         const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
 
@@ -88,21 +119,12 @@ export class LLMService {
           }
         }
 
-        // Add current turn with supporting material context if present, or genuine open academic prompt
-        const hasContext = !!(context.contextString && context.contextString.trim().length > 0);
-        const currentTurnPrompt = isCasual
-          ? query
-          : hasContext
-          ? `[SUPPORTING COURSE MATERIAL & HANDWRITTEN RESOURCE EXCERPTS]\n` +
-            `${context.contextString}\n\n` +
-            `[STUDENT QUESTION]\n` +
-            `${query}\n\n` +
-            `Please provide a clear, beautifully structured, conversational answer like ChatGPT/Gemini, grounded in these materials.`
-          : `[COURSE CONTEXT]\n` +
-            `Subject: ${docName || 'Academic Curriculum'}\n\n` +
-            `[STUDENT QUESTION]\n` +
-            `${query}\n\n` +
-            `Please provide a clear, beautifully structured, conversational academic answer for this question with definitions, examples, and key takeaways.`;
+        const currentTurnPrompt =
+          `[SUPPORTING COURSE MATERIAL & HANDWRITTEN RESOURCE EXCERPTS]\n` +
+          `${context.contextString}\n\n` +
+          `[STUDENT QUESTION]\n` +
+          `${query}\n\n` +
+          `Please provide a clear, accurate, document-grounded answer based on the excerpts above, citing the relevant source document and page numbers.`;
 
         contents.push({
           role: 'user',
@@ -120,7 +142,7 @@ export class LLMService {
         for (const modelName of candidateModels) {
           const cooldownUntil = this.modelCooldowns.get(modelName) || 0;
           if (now < cooldownUntil) {
-            continue; // Skip models currently in rate-limit or demand cooldown
+            continue;
           }
 
           try {
@@ -129,8 +151,8 @@ export class LLMService {
               contents,
               config: {
                 systemInstruction,
-                temperature: isCasual ? 0.7 : 0.3,
-                abortSignal: AbortSignal.timeout(6000),
+                temperature: 0.2, // Low temperature for high precision grounding
+                abortSignal: AbortSignal.timeout(20000), // 20s timeout
               },
             });
 
@@ -138,7 +160,7 @@ export class LLMService {
             if (text.trim()) {
               return {
                 answer: text.trim(),
-                isGrounded: !isCasual && hasContext,
+                isGrounded: true,
                 insufficientInfo: false,
               };
             }
@@ -157,7 +179,7 @@ export class LLMService {
     }
 
     // High-quality local tutor synthesis fallback
-    return this.synthesizeLocally(query, context, docName);
+    return this.synthesizeLocally(query, context, docName, hasAnyDocumentsUploaded);
   }
 
   isGreetingOrCasual(query: string): boolean {
@@ -210,7 +232,8 @@ export class LLMService {
   private synthesizeLocally(
     query: string,
     context: ConstructedContext,
-    docName?: string
+    docName?: string,
+    hasAnyDocumentsUploaded?: boolean
   ): LLMResponse {
     if (this.isGreetingOrCasual(query)) {
       return this.handleCasualResponse(query);
@@ -244,51 +267,62 @@ export class LLMService {
       }
     }
 
+    if (meaningfulParagraphs.length === 0) {
+      if (hasAnyDocumentsUploaded) {
+        return {
+          answer: `I couldn't find a clear answer to this question in the uploaded materials. I can explain it using general knowledge if you'd like.`,
+          isGrounded: false,
+          insufficientInfo: true,
+        };
+      }
+      return {
+        answer: this.generateAcademicExplanation(query, this.extractTopicTitle(query, sourceSection)),
+        isGrounded: false,
+        insufficientInfo: false,
+      };
+    }
+
     const topicTitle = this.extractTopicTitle(query, sourceSection);
     const sections: string[] = [];
 
     // 1. Direct answer / Overview (structured like ChatGPT / Gemini)
     sections.push(
       `### ${topicTitle}\n\n` +
-      `Here is an explanation of **${topicTitle}** based on your course notes for **${sourceSection}**:\n`
+      `Here is an explanation of **${topicTitle}** based on your uploaded course notes for **${sourceSection}**:\n`
     );
 
-    if (meaningfulParagraphs.length === 0) {
-      sections.push(this.generateAcademicExplanation(query, topicTitle));
+    // 2. Core Definitions and Rules from the actual chunks
+    const definitionLines = meaningfulParagraphs.filter((l) =>
+      /definition|specifies|represents|is in|holds|eliminates|satisfies|condition|rule|theorem|property|algorithm/i.test(l)
+    );
+
+    if (definitionLines.length > 0) {
+      sections.push(
+        `#### Key Principles & Definitions\n` +
+        definitionLines.slice(0, 4).map((d) => `- **${this.formatBulletTitle(d)}**: ${d}`).join('\n')
+      );
     } else {
-      // 2. Core Definitions and Rules from the actual chunks
-      const definitionLines = meaningfulParagraphs.filter((l) =>
-        /definition|specifies|represents|is in|holds|eliminates|satisfies|condition|rule|theorem|property|algorithm/i.test(l)
+      sections.push(
+        `#### Key Concepts\n` +
+        meaningfulParagraphs.slice(0, 3).map((l) => `- ${l}`).join('\n')
       );
+    }
 
-      if (definitionLines.length > 0) {
-        sections.push(
-          `#### Key Principles & Definitions\n` +
-          definitionLines.slice(0, 4).map((d) => `- **${this.formatBulletTitle(d)}**: ${d}`).join('\n')
-        );
-      } else {
-        sections.push(
-          `#### Key Concepts\n` +
-          meaningfulParagraphs.slice(0, 3).map((l) => `- ${l}`).join('\n')
-        );
-      }
+    // 3. Illustrative Examples & Analysis
+    const exampleLines = meaningfulParagraphs.filter((l) =>
+      /example|relation|table|step|case|solution|diagram|schema|process/i.test(l)
+    );
 
-      // 3. Illustrative Examples & Analysis
-      const exampleLines = meaningfulParagraphs.filter((l) =>
-        /example|relation|table|step|case|solution|diagram|schema|process/i.test(l)
+    if (exampleLines.length > 0) {
+      sections.push(
+        `#### Step-by-Step Breakdown & Examples\n` +
+        exampleLines.slice(0, 3).map((ex) => `- ${ex}`).join('\n')
       );
-
-      if (exampleLines.length > 0) {
-        sections.push(
-          `#### Step-by-Step Breakdown & Examples\n` +
-          exampleLines.slice(0, 3).map((ex) => `- ${ex}`).join('\n')
-        );
-      } else if (meaningfulParagraphs.length > 3) {
-        sections.push(
-          `#### Additional Details from Resource\n` +
-          meaningfulParagraphs.slice(3, 6).map((m) => `- ${m}`).join('\n')
-        );
-      }
+    } else if (meaningfulParagraphs.length > 3) {
+      sections.push(
+        `#### Additional Details from Resource\n` +
+        meaningfulParagraphs.slice(3, 6).map((m) => `- ${m}`).join('\n')
+      );
     }
 
     // 4. Summary & Exam Tip
@@ -297,6 +331,18 @@ export class LLMService {
       `- **Conceptual Core**: Always lead with the formal definition, scope, and foundational pillars before giving illustrative examples.\n` +
       `- **Presentation Tip**: In university examinations, organize your response with clear subheadings, numbered characteristics, and real-world or mathematical examples to secure full marks.`
     );
+
+    // 5. Source Grounding Citations
+    if (primarySource) {
+      const pageInfo = primarySource.pageStart ? `, Page ${primarySource.pageStart}` : '';
+      const docLabel = primarySource.docName || docName || 'Uploaded Document';
+      const quoteSnippet = primarySource.snippet ? primarySource.snippet.replace(/\s+/g, ' ').slice(0, 150) : '';
+      sections.push(
+        `---\n` +
+        `**Source:** ${docLabel}${pageInfo}\n` +
+        (quoteSnippet ? `**Supporting content:** "${quoteSnippet}..."` : '')
+      );
+    }
 
     return {
       answer: sections.join('\n\n'),

@@ -132,21 +132,20 @@ export class VectorStore {
     const stopWords = new Set([
       'a', 'an', 'the', 'is', 'are', 'was', 'were', 'what', 'which', 'who', 'how', 'why',
       'when', 'where', 'can', 'you', 'give', 'me', 'tell', 'about', 'and', 'or', 'in', 'on',
-      'at', 'to', 'for', 'of', 'with', 'by', 'from', 'explain', 'describe', 'define'
+      'at', 'to', 'for', 'of', 'with', 'by', 'from', 'explain', 'describe', 'define',
+      'does', 'did', 'do', 'say', 'state', 'page', 'notes', 'my', 'written', 'this', 'that'
     ]);
     const queryTokens = (queryText.toLowerCase().match(/[a-z0-9_#$+-]+/g) || []).filter(
       (w) => w.length > 1 && !stopWords.has(w)
     );
 
     this.entries.forEach((entry) => {
-      // Access control & Scoping (Requirement #38 & #39)
-      if (userId && entry.userId !== userId) {
-        return;
-      }
+      // Document-level filter if explicitly selected
       if (documentId && entry.documentId !== documentId) {
         return;
       }
-      if (notebookId && entry.notebookId !== notebookId) {
+      // Notebook-level scoping: chunks belonging to this notebook
+      if (notebookId && entry.notebookId && entry.notebookId !== notebookId) {
         return;
       }
 
@@ -174,34 +173,30 @@ export class VectorStore {
             matchedTokens++;
           }
           if (headingLower.includes(token) || sectionLower.includes(token)) {
-            headingBonus += 0.2;
+            headingBonus += 0.25;
           }
         }
 
         const tokenOverlapRatio = matchedTokens / queryTokens.length;
-        lexicalScore = Math.min(1, tokenOverlapRatio + Math.min(0.3, headingBonus));
+        lexicalScore = Math.min(1, tokenOverlapRatio * 0.75 + Math.min(0.35, headingBonus));
 
         // Exact phrase bonus if query is 2+ words
-        if (queryText.length > 4 && textLower.includes(queryText.toLowerCase())) {
-          lexicalScore = Math.min(1, lexicalScore + 0.25);
+        if (queryText.length > 4 && textLower.includes(queryText.toLowerCase().trim())) {
+          lexicalScore = Math.min(1, lexicalScore + 0.3);
         }
       }
 
-      // 3. Hybrid fusion: 65% dense semantic + 35% lexical keyword matching
+      // 3. Hybrid fusion: 60% dense semantic + 40% lexical keyword matching
       const finalScore = queryTokens.length > 0
-        ? 0.65 * semanticScore + 0.35 * lexicalScore
+        ? 0.60 * semanticScore + 0.40 * lexicalScore
         : semanticScore;
 
       candidates.push({ entry, score: finalScore });
     });
 
-    // If strict scoping yielded 0 candidates, fall back to searching all documents for this user
+    // If strict scoping yielded 0 candidates, search across all available entries
     if (candidates.length === 0 && this.entries.size > 0) {
       this.entries.forEach((entry) => {
-        if (userId && entry.userId && entry.userId !== userId && entry.userId !== 'student_demo') {
-          return;
-        }
-
         let dotProduct = 0;
         const v = entry.vector;
         const len = Math.min(queryVector.length, v.length);
@@ -224,20 +219,20 @@ export class VectorStore {
               matchedTokens++;
             }
             if (headingLower.includes(token) || sectionLower.includes(token)) {
-              headingBonus += 0.2;
+              headingBonus += 0.25;
             }
           }
 
           const tokenOverlapRatio = matchedTokens / queryTokens.length;
-          lexicalScore = Math.min(1, tokenOverlapRatio + Math.min(0.3, headingBonus));
+          lexicalScore = Math.min(1, tokenOverlapRatio * 0.75 + Math.min(0.35, headingBonus));
 
-          if (queryText.length > 4 && textLower.includes(queryText.toLowerCase())) {
-            lexicalScore = Math.min(1, lexicalScore + 0.25);
+          if (queryText.length > 4 && textLower.includes(queryText.toLowerCase().trim())) {
+            lexicalScore = Math.min(1, lexicalScore + 0.3);
           }
         }
 
         const finalScore = queryTokens.length > 0
-          ? 0.65 * semanticScore + 0.35 * lexicalScore
+          ? 0.60 * semanticScore + 0.40 * lexicalScore
           : semanticScore;
 
         candidates.push({ entry, score: finalScore });
